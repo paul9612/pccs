@@ -4,11 +4,14 @@ const mongoose = require('mongoose');
 const path = require('path');
 const dotenv = require('dotenv');
 
+// ✅ Cloudinary imports
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+
 // Load environment variables from .env
 dotenv.config();
 
 const app = express();
-const upload = multer({ dest: "uploads/" });
 const PORT = process.env.PORT || 3000;
 
 // Middleware
@@ -22,6 +25,21 @@ const mongoURI = process.env.MONGO_URI;
 mongoose.connect(mongoURI)
   .then(() => console.log('✅ MongoDB connected successfully'))
   .catch(err => console.error('❌ MongoDB connection error:', err));
+
+  cloudinary.config({
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.CLOUD_KEY,
+  api_secret: process.env.CLOUD_SECRET
+});
+
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'uploads',
+    resource_type: 'auto' // handles images & videos
+  }
+});
+
 
 // Mongoose Schemas
 const appointmentSchema = new mongoose.Schema({
@@ -60,6 +78,8 @@ const mediaSchema = new mongoose.Schema({
   uploadedAt: { type: Date, default: Date.now }
 });
 
+const upload = multer({ storage });
+
 // Mongoose Models
 const Appointment = mongoose.model('Appointment', appointmentSchema);
 const ComplaintReport = mongoose.model('ComplaintReport', complaintReportSchema);
@@ -71,10 +91,7 @@ const Media = mongoose.model('Media', mediaSchema); // Define the model here
 const ADMIN_USERNAME = 'AdminPauls';
 const ADMIN_PASSWORD = 'Adminpaul7685';
 
-// Serve uploaded files publicly
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// File Upload Route
+// File Upload Route (FINAL ✅)
 app.post("/upload", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) {
@@ -85,7 +102,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         const newMedia = new Media({
             name: req.file.originalname,
             type: req.file.mimetype,
-            path: `/uploads/${req.file.filename}`
+            path: req.file.path  // <-- This will be Cloudinary URL
         });
         await newMedia.save();
 
@@ -96,16 +113,27 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     }
 });
 
+
 // Get all media (public)
 app.get("/api/media", async (req, res) => {
     try {
         const media = await Media.find().sort({ uploadedAt: -1 });
-        res.json(media);
+
+        // Return Cloudinary URLs directly
+        res.json(media.map(m => ({
+            id: m._id,
+            name: m.name,
+            type: m.type,
+            url: m.path,   // ✅ Cloudinary URL
+            uploadedAt: m.uploadedAt
+        })));
     } catch (err) {
         console.error("❌ Error fetching media:", err);
         res.status(500).json({ message: "Error fetching media" });
     }
 });
+
+
 
 
 
@@ -116,15 +144,6 @@ const isAdminAuthenticated = (req, res, next) => {
     // if the user has successfully "logged in". A real app needs server-side session/token validation.
     next();
 };
-
-// API Routes
-
-// File Upload Route
-app.post("/upload", upload.single("file"), (req, res) => {
-    // You can save file info to MongoDB here
-    console.log(req.file);
-    res.json({ message: "File uploaded successfully!" });
-});
 
 // Get all reports (public, optional)
 app.get('/api/reports', async (req, res) => {
@@ -319,7 +338,7 @@ app.delete('/api/admin/job-applications/:id', isAdminAuthenticated, async (req, 
 
 
 // Serve admin.html for the /admin route
-app.get('/*admin', (req, res) => {
+app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
